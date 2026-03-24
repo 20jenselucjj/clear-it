@@ -26,7 +26,7 @@ echo ============================================
 echo.
 echo To actually clean, use one of these scripts:
 echo   - Clean-TempFiles.bat
-echo   - Clean-Profiles-90Days.bat
-echo   - Full-Cleanup.bat
+echo   - Clean-Profiles-Custom.bat
+echo   - Full-Cleanup-Custom.bat
 echo.
 pause

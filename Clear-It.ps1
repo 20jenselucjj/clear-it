@@ -382,7 +382,13 @@ function Invoke-ProfileCleanup {
     $allExclusions = $allExclusions | Sort-Object -Unique
 
     Write-Action "Current user (always excluded): $currentUser" -Level Info
-    Write-Action "Additional exclusions: $($ExcludeUsers -join ', ')" -Level Info
+    $additionalExclusions = if ($ExcludeUsers.Count -gt 0) {
+        $ExcludeUsers -join ', '
+    }
+    else {
+        'None'
+    }
+    Write-Action "Additional exclusions: $additionalExclusions" -Level Info
     Write-Action "Cutoff date: $($cutoffDate.ToString('yyyy-MM-dd HH:mm:ss'))" -Level Info
 
     # Get all user profiles via CIM
@@ -412,7 +418,7 @@ function Invoke-ProfileCleanup {
     }
 
     # Filter to profiles eligible for deletion
-    $profilesToDelete = $allProfiles | Where-Object {
+    $profilesToDelete = @($allProfiles | Where-Object {
         $userName = Split-Path $_.LocalPath -Leaf
 
         # ALL of these must be true for deletion
@@ -422,7 +428,7 @@ function Invoke-ProfileCleanup {
         ($userName -notin $allExclusions) -and                 # Not in exclusion list
         ($_.LastUseTime) -and                                  # Has a last-use timestamp
         ($_.LastUseTime -lt $cutoffDate)                       # Older than cutoff
-    }
+    })
 
     if (-not $profilesToDelete -or $profilesToDelete.Count -eq 0) {
         Write-Host ""
@@ -456,8 +462,79 @@ function Invoke-ProfileCleanup {
 
     $profileTable | Format-Table Username, LastUsed, DaysUnused, SizeMB, Path -AutoSize | Out-String | Write-Host
 
-    # Execute deletion
-    foreach ($profile in $profilesToDelete) {
+    # --- Interactive profile selection ---
+    # Number each eligible profile so the user can choose which to delete
+    Write-Host ""
+    Write-Host "    #   Username" -ForegroundColor Cyan
+    Write-Host "    --  --------" -ForegroundColor Cyan
+    for ($i = 0; $i -lt $profilesToDelete.Count; $i++) {
+        $uName = Split-Path $profilesToDelete[$i].LocalPath -Leaf
+        Write-Host "    $($i + 1)   $uName" -ForegroundColor White
+    }
+    Write-Host ""
+    Write-Host "    Enter the numbers of profiles to delete (comma-separated)," -ForegroundColor Yellow
+    Write-Host "    or type 'A' to select ALL, or 'N' to cancel." -ForegroundColor Yellow
+    Write-Host ""
+    $selectionInput = Read-Host "    Selection"
+
+    if ([string]::IsNullOrWhiteSpace($selectionInput) -or $selectionInput.Trim().ToUpper() -eq 'N') {
+        Write-Action "Profile deletion cancelled by user." -Level Info
+        return
+    }
+
+    if ($selectionInput.Trim().ToUpper() -eq 'A') {
+        $selectedProfiles = @($profilesToDelete)
+    }
+    else {
+        $selectedIndices = @()
+        foreach ($token in ($selectionInput -split ',')) {
+            $token = $token.Trim()
+            if ($token -match '^\d+$') {
+                $idx = [int]$token - 1
+                if ($idx -ge 0 -and $idx -lt $profilesToDelete.Count) {
+                    $selectedIndices += $idx
+                }
+                else {
+                    Write-Action "Ignoring out-of-range number: $token" -Level Warning
+                }
+            }
+            else {
+                Write-Action "Ignoring invalid input: $token" -Level Warning
+            }
+        }
+        $selectedIndices = $selectedIndices | Sort-Object -Unique
+        if ($selectedIndices.Count -eq 0) {
+            Write-Action "No valid profiles selected. Cancelling." -Level Info
+            return
+        }
+        $selectedProfiles = @()
+        foreach ($idx in $selectedIndices) {
+            $selectedProfiles += $profilesToDelete[$idx]
+        }
+    }
+
+    Write-Host ""
+    Write-Action "Selected $($selectedProfiles.Count) profile(s) for removal." -Level Warning
+
+    if (-not $DryRun) {
+        $selectedProfileNames = @(
+            foreach ($profile in $selectedProfiles) {
+                Split-Path $profile.LocalPath -Leaf
+            }
+        )
+
+        Write-Host ""
+        Write-Host "    Type DELETE to permanently remove: $($selectedProfileNames -join ', ')" -ForegroundColor Red
+        $deleteConfirmation = Read-Host "    Confirmation"
+
+        if ($deleteConfirmation.Trim().ToUpper() -ne 'DELETE') {
+            Write-Action "Profile deletion cancelled by user." -Level Info
+            return
+        }
+    }
+
+    # Execute deletion on selected profiles only
+    foreach ($profile in $selectedProfiles) {
         $userName = Split-Path $profile.LocalPath -Leaf
 
         if ($DryRun) {
@@ -622,9 +699,11 @@ function Invoke-TempFileCleanup {
         }
         else {
             try {
+                $dmpBytes = (Get-Item $memDmp -ErrorAction Stop).Length
                 Remove-Item $memDmp -Force -ErrorAction Stop
                 Write-Action "Removed MEMORY.DMP ($dmpSize MB)" -Level Success
-                $Script:TotalBytesFreed += (Get-Item $memDmp -ErrorAction SilentlyContinue).Length
+                $Script:TotalBytesFreed += $dmpBytes
+                $Script:TotalFilesRemoved++
             }
             catch {
                 Write-Action "Could not remove MEMORY.DMP (may be locked): $_" -Level Warning
@@ -752,6 +831,20 @@ function Write-Summary {
     $endFreeGB = Get-FreeSpaceGB
     $reclaimedGB = [math]::Round($endFreeGB - $StartFreeGB, 2)
     $duration = (Get-Date) - $Script:StartTime
+    $estimatedLabel = if ($DryRun) { 'Estimated reclaimable:' } else { 'Estimated freed:' }
+    $estimatedValue = "$([math]::Round($Script:TotalBytesFreed / 1MB, 2)) MB"
+    $diskFreeAfterLine = if ($DryRun) {
+        "Disk free after:    $endFreeGB GB (unchanged in preview mode)"
+    }
+    else {
+        "Disk free after:    $endFreeGB GB"
+    }
+    $actualReclaimedLine = if ($DryRun) {
+        'Actual reclaimed:   preview only - no changes made'
+    }
+    else {
+        "Actual reclaimed:   $reclaimedGB GB"
+    }
 
     $summary = @"
 
@@ -767,11 +860,11 @@ function Write-Summary {
 
   Files cleaned:      $($Script:TotalFilesRemoved)
   Files skipped:      $($Script:TotalFilesFailed) (locked)
-  Estimated freed:    $([math]::Round($Script:TotalBytesFreed / 1MB, 2)) MB
+  $estimatedLabel    $estimatedValue
 
   Disk free before:   $StartFreeGB GB
-  Disk free after:    $endFreeGB GB
-  Actual reclaimed:   $reclaimedGB GB
+  $diskFreeAfterLine
+  $actualReclaimedLine
   =============================================
 
 "@

@@ -81,6 +81,17 @@ function Get-ScriptDirectory {
     return (Get-Location).Path
 }
 
+function Read-UpperInput {
+    param([string]$Prompt)
+
+    $value = Read-Host $Prompt
+    if ($null -eq $value) {
+        return ''
+    }
+
+    return $value.Trim().ToUpper()
+}
+
 function Invoke-ClearIt {
     param(
         [string]$Mode,
@@ -89,7 +100,8 @@ function Invoke-ClearIt {
         [bool]$DryRun = $false,
         [string[]]$ExcludeUsers = @(),
         [switch]$SkipBrowserCache,
-        [switch]$SkipWindowsUpdate
+        [switch]$SkipWindowsUpdate,
+        [string]$CompletionMessage = 'Operation complete.'
     )
 
     $scriptDir = Get-ScriptDirectory
@@ -121,6 +133,9 @@ function Invoke-ClearIt {
     & $mainScript @clearItParams
 
     Write-Host ""
+    Write-Host "    ================================================" -ForegroundColor Cyan
+    Write-Host "    [OK] $CompletionMessage" -ForegroundColor Green
+    Write-Host ""
     Read-Host "    Press Enter to return to menu"
 }
 
@@ -136,7 +151,7 @@ function Show-CustomMenu {
     Write-Host "    [2] Temp files only"
     Write-Host "    [3] Both"
     Write-Host ""
-    $modeChoice = Read-Host "    Enter choice (1-3)"
+    $modeChoice = Read-UpperInput "    Enter choice (1-3)"
     $selectedMode = switch ($modeChoice) {
         '1' { 'Profiles' }
         '2' { 'TempFiles' }
@@ -158,13 +173,13 @@ function Show-CustomMenu {
     Write-Host "    IMPORTANT: Enable Dry Run (preview only)?" -ForegroundColor Yellow
     Write-Host "    [Y] Yes - Preview only (safe, recommended)"
     Write-Host "    [N] No - Actually delete files"
-    $dryRunChoice = Read-Host "    Enter choice (Y/N)"
+    $dryRunChoice = Read-UpperInput "    Enter choice (Y/N)"
     $dryRun = ($dryRunChoice -ne 'N')
 
     # Skip options
     Write-Host ""
-    $skipBrowsers = (Read-Host "    Skip browser caches? (Y/N, default: N)") -eq 'Y'
-    $skipWU = (Read-Host "    Skip Windows Update cache? (Y/N, default: N)") -eq 'Y'
+    $skipBrowsers = (Read-UpperInput "    Skip browser caches? (Y/N, default: N)") -eq 'Y'
+    $skipWU = (Read-UpperInput "    Skip Windows Update cache? (Y/N, default: N)") -eq 'Y'
 
     # Exclude users
     Write-Host ""
@@ -173,7 +188,8 @@ function Show-CustomMenu {
 
     Invoke-ClearIt -Mode $selectedMode -InactiveDays $inactiveDays -TempFileAgeDays $tempAge `
                    -DryRun $dryRun -ExcludeUsers $excludeUsers `
-                   -SkipBrowserCache:$skipBrowsers -SkipWindowsUpdate:$skipWU
+                   -SkipBrowserCache:$skipBrowsers -SkipWindowsUpdate:$skipWU `
+                   -CompletionMessage 'Custom cleanup complete.'
 }
 
 function Get-InactiveDays {
@@ -211,15 +227,15 @@ while ($true) {
     Show-Banner
     Show-Menu
 
-    $choice = Read-Host "    Enter your choice"
+    $choice = Read-UpperInput "    Enter your choice"
 
-    switch ($choice.ToUpper()) {
+    switch ($choice) {
         '1' {
             # Safe Preview
             Show-Banner
             Write-Host "    Running SAFE PREVIEW..." -ForegroundColor Green
             Start-Sleep -Seconds 1
-            Invoke-ClearIt -Mode All -DryRun $true
+            Invoke-ClearIt -Mode All -DryRun $true -CompletionMessage 'Preview complete - review the output above.'
         }
         '2' {
             # Temp Files Only
@@ -227,9 +243,9 @@ while ($true) {
             Write-Host "    This will CLEAN TEMP FILES ONLY." -ForegroundColor Yellow
             Write-Host "    User profiles will NOT be touched." -ForegroundColor Gray
             Write-Host ""
-            $confirm = Read-Host "    Continue? (Y/N)"
+            $confirm = Read-UpperInput "    Continue? (Y/N)"
             if ($confirm -eq 'Y') {
-                Invoke-ClearIt -Mode TempFiles -DryRun $false
+                Invoke-ClearIt -Mode TempFiles -DryRun $false -CompletionMessage 'Temp file cleanup complete.'
             }
         }
         '3' {
@@ -242,9 +258,9 @@ while ($true) {
             Write-Host "    Profiles inactive ${inactiveDays}+ days will be removed." -ForegroundColor Yellow
             Write-Host "    Your current profile and system accounts are protected." -ForegroundColor Gray
             Write-Host ""
-            $confirm = Read-Host "    Continue? (Y/N)"
+            $confirm = Read-UpperInput "    Continue? (Y/N)"
             if ($confirm -eq 'Y') {
-                Invoke-ClearIt -Mode Profiles -InactiveDays $inactiveDays -DryRun $false
+                Invoke-ClearIt -Mode Profiles -InactiveDays $inactiveDays -DryRun $false -CompletionMessage 'Profile cleanup complete.'
             }
         }
         '4' {
@@ -260,9 +276,9 @@ while ($true) {
             Write-Host ""
             Write-Host "    RECOMMENDED: Run option [1] first to preview!" -ForegroundColor Cyan
             Write-Host ""
-            $confirm = Read-Host "    Continue? (Y/N)"
+            $confirm = Read-UpperInput "    Continue? (Y/N)"
             if ($confirm -eq 'Y') {
-                Invoke-ClearIt -Mode All -InactiveDays $inactiveDays -DryRun $false
+                Invoke-ClearIt -Mode All -InactiveDays $inactiveDays -DryRun $false -CompletionMessage 'Full cleanup complete.'
             }
         }
         '5' {
